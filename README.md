@@ -19,7 +19,7 @@ I will describe how we implement each of these node below.
 
 #### Waypoint updater
 
-We update only the [waypoint_updater.py](https://github.com/khatiba/CarND-System-Integration/blob/master/ros/src/waypoint_updater/waypoint_updater.py)
+We update only the waypoint_updater.py
 
 Waypoint updater node will publish waypoints from the from the car's current position to some waypoints ahead.
 It will publish to `final_waypoints`.
@@ -56,7 +56,7 @@ Some flags like `self.stopping` and `self.resuming` are present to carry the cur
 
 #### DBW (Drive-By-Wire)
 
-We update [dbw_node.py](https://github.com/khatiba/CarND-System-Integration/blob/master/ros/src/twist_controller/dbw_node.py) and [twist_controller.py](https://github.com/khatiba/CarND-System-Integration/blob/master/ros/src/twist_controller/twist_controller.py).
+We update dbw_node.py
 
 ###### dbw_node.py
 DBW node took in target twist command and publish the driving command: throttle, brake and steer.
@@ -85,12 +85,10 @@ If acceleration is negative, we calculate brake based on vehicle status specifie
 
 #### Traffic Light Detection
 
-We updated [tl_detector.py](https://github.com/khatiba/CarND-System-Integration/blob/master/ros/src/tl_detector/tl_detector.py) and added [cv_method.py](https://github.com/khatiba/CarND-System-Integration/blob/master/ros/src/tl_detector/light_classification/cv_method.py)
-
-**Resubmission notes: **
- [cv_method.py](https://github.com/khatiba/CarND-System-Integration/blob/master/ros/src/tl_detector/light_classification/cv_method.py) did not work for Carla driving. Reason being the filtering if too dependent on the lighting condition and would change a lot due to weather.
+We updated tl_detector.py and added cv_method.py
+cv_method.py did not work for Carla driving. Reason being the filtering if too dependent on the lighting condition and would change a lot due to weather.
 We have not switched back to our original NN method.
-This will be described in later section and code in [carla.py](https://github.com/khatiba/CarND-System-Integration/blob/master/ros/src/tl_detector/light_classification/carla.py)
+This will be described in later section and code in carla.py
 
 ###### tl_detector.py
 This is the main class of Traffic light detection node.
@@ -116,9 +114,8 @@ The reason is due to the fact that we have been using the VM provided by the cou
 We have working NN that is able to detect the light correctly, but by the time it is done, the car has already driven past the traffic light.
 
 This leads to our classical vision method using openCV functions.
-It is implemented in [cv_method.py](https://github.com/khatiba/CarND-System-Integration/blob/master/ros/src/tl_detector/light_classification/cv_method.py)
+It is implemented in cv_method.py
 
-###### ~~cv_method.py~~
 The idea behind our algorithm is to detect a red filled circle within an image.
 We use `cv2.HoughCircles` to achieve it, however there are more things to consider here.
 The source of this method is from this blogpost Reference: https://solarianprogrammer.com/2015/05/08/detect-red-circles-image-using-opencv/
@@ -261,13 +258,13 @@ docker run -p 4567:4567 -v $PWD:/capstone -v /tmp/log:/root/.ros/ --rm -it capst
 ```
 
 #### Port Forwarding
-To set up port forwarding, please refer to the [instructions from term 2](https://classroom.udacity.com/nanodegrees/nd013/parts/40f38239-66b6-46ec-ae68-03afd8a601c8/modules/0949fca6-b379-42af-a919-ee50aa304e6a/lessons/f758c44c-5e40-4e01-93b5-1a82aa4e044f/concepts/16cf4a78-4fc7-49e1-8621-3450ca938b77)
+To set up port forwarding, please refer to the instructions from term 2
 
 #### Usage
 
 1. Clone the project repository
 ```bash
-git clone https://github.com/khatiba/CarND-System-Integration.git
+git clone https://github.com/sunny-1651/system-integration.git
 ```
 
 2. Inference graph
@@ -278,7 +275,6 @@ ros/src/tl_detector/light_classification/models
 
 3. Install python dependencies
 ```bash
-cd CarND-System-Integration
 pip install -r requirements.txt
 ```
 4. Make and run styx
@@ -298,7 +294,7 @@ unzip traffic_light_bag_file.zip
 ```
 3. Launch your project in site mode
 ```bash
-cd CarND-Capstone/ros
+cd ros
 roslaunch launch/site.launch
 ```
 4. Play the bag file
