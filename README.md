@@ -175,7 +175,8 @@ roslaunch launch/site.launch
 
 
 ###Note:
-Download the folder from this [g drive link](https://drive.google.com/drive/folders/1iFKwmgXftG5X0hW7Zk72UY20sZ3c6R7I?usp=sharing) https://drive.google.com/drive/folders/1iFKwmgXftG5X0hW7Zk72UY20sZ3c6R7I?usp=sharing
+Download the folder from this [g drive link](https://drive.google.com/drive/folders/1iFKwmgXftG5X0hW7Zk72UY20sZ3c6R7I?usp=sharing)
+https://drive.google.com/drive/folders/1iFKwmgXftG5X0hW7Zk72UY20sZ3c6R7I?usp=sharing
 
 Move the sim-classifier.h5 and sim-classifier-8.h5 file to the directory
 ```bash
