@@ -4,9 +4,6 @@ In the figure below you can find an overview of the main software components and
 
 Carla is equipped with a drive-by-wire system (DBW) and hence the throttle, brake and steering can be electronically controlled. In the graph below the Control Module outputs Throttle, Brake and Steering signal commands to the car or simulator. These commands are set to be published at 50Hz since this is the frequency that Carla´s DBW system expects.
 
-[alt text] ./imgs/project-rosgraph.png "rosnodes"
-
-
 
 ## Approach and Code Description
 
@@ -173,3 +170,19 @@ cd CarND-Capstone/ros
 roslaunch launch/site.launch
 ```
 5. Confirm that traffic light detection works on real life images
+
+
+
+
+###Note:
+Download the folder from this [g drive link](https://drive.google.com/drive/folders/1iFKwmgXftG5X0hW7Zk72UY20sZ3c6R7I?usp=sharing) https://drive.google.com/drive/folders/1iFKwmgXftG5X0hW7Zk72UY20sZ3c6R7I?usp=sharing
+
+Move the sim-classifier.h5 and sim-classifier-8.h5 file to the directory
+```bash
+ros/src/tl_detector/light_classification/
+```
+Go to the directory in which the above above files are stored and run this comand
+```bash
+mv -t  <project_directory>/system-integration-master/ros/src/tl_detector/light_classification/ sim-classifier.h5 sim-classifier-8.h5
+```
+replace <project_directory> by the location of your project
