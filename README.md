@@ -4,7 +4,7 @@ In the figure below you can find an overview of the main software components and
 
 Carla is equipped with a drive-by-wire system (DBW) and hence the throttle, brake and steering can be electronically controlled. In the graph below the Control Module outputs Throttle, Brake and Steering signal commands to the car or simulator. These commands are set to be published at 50Hz since this is the frequency that Carla´s DBW system expects.
 
-[alt text] ./imgs/project-rosgraph.png
+[alt text] ./imgs/project-rosgraph.png "rosnodes"
 
 
 
