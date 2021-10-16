@@ -1,233 +1,112 @@
-### Implementation details
+## Project Overview
 
-We have been following the software architecture specified by the course. However we noticed that the `Obstacle Detection` module has been removed and therefore no `/obstacle_waypoint` has been published or subscribed.
+In the figure below you can find an overview of the main software components and how they communicate with each other and with the car or simulator.
 
-![final-project-ros-graph-v3](./imgs/final-project-ros-graph-v3.png)
+Carla is equipped with a drive-by-wire system (DBW) and hence the throttle, brake and steering can be electronically controlled. In the graph below the Control Module outputs Throttle, Brake and Steering signal commands to the car or simulator. These commands are set to be published at 50Hz since this is the frequency that Carla´s DBW system expects.
 
-#### Overview
-The starter repo has provided the skeleton of this architecture and all the ROS node has been provided with starter file. There are three ROS nodes in this diagram that we need to work on.
+![alt text][image2]
 
-They are:
 
-- Waypoint Updater Node
-- DBW Node
-- Traffic Light Detection Node
 
-I will describe how we implement each of these node below.
+## Approach and Code Description
 
+The submitted code is implemented in ROS. For this project we mainly use __rospy__, which is a pure Python client library for ROS and enables Python programmers to interface with ROS Topics, Services and Parameters.
 
+We proceed to describe the modules and main components using the following structure:
 
-#### Waypoint updater
+1. Perception Module
+     * 1.1 Traffic Light Detection Node
+     
+2. Planning Module
+      * 2.1 Waypoint Loader
+      * 2.2 Waypoint Updater
+      
+3. Control Module
+      * 3.1 DBW Node
+      * 3.2 Waypoint Follower
 
-We update only the waypoint_updater.py
+#### 1.1 Traffic Light Detection Node (Perception Module)
 
-Waypoint updater node will publish waypoints from the from the car's current position to some waypoints ahead.
-It will publish to `final_waypoints`.
+The Perception Module consists of a Traffic Light Detection Node. For now we are skipping the Obstacle Detection Node since currently we do not dispose of Lidar and Radar data when testing on Carla. Hence it would be very difficult with current available hardware and measurements to build a realiable obstacle detector.
 
-Waypoint updater node subscribe to:
-- `/current_pose` This contains current position of the car.
-- `/base_waypoints` This contains the planned route of the car.
-- `/current_velocity` This contains current velocity of the car.
-- `/traffic_waypoints` This contains information about whether there is a red light ahead or there is no red light closeby.
+As a classifier for the traffic detection node we use a CNN model for light detection on the simulator. For light detection on real images and testing on Carla we trained a larger model which is more computationally expensive and requires powerful hardware like the one installed on Carla. 
 
-Apart from those already mentioned in the udacity course.
-Two functions are where we spend most of time developing on.
-###### pose_cb
-This is the callback function when we receive the current position of the car.
-Whenever we receive a new position of the ego-car, we will check the corresponding waypoints of it.
-If it is different from the previous one, we will publish the new waypoints.
-If it is the same, for performance purpose, we avoid sending duplicate data.
-This has an excpetion where if car is trying to resuming from stopped state, we will publish updated waypoints even when our position stays the same.
+The Traffic Light Detection Node is implemented [here](./ros/src/tl_detector/tl_detector.py).
 
-###### traffic_cb
-This is the callback function when we receive the closest red light wayppints.
-If the value is -1 meaning no red light nearby, we will publish the received `/base_waypoints`.
-If there is a visible red light ahead of us, we would need to bring the car to stop and resuming when the light turns green.
+After initialization this Node subscribes to the following topics: `/current_pose`, `/base_waypoints`, `/image_color` and `/car_waypoint_id`  (code lines 30 to 33). Then, after defining some important variables, we search for the waypoint of the first traffic lights stop ahead (code lines 62 to 64). 
 
-We achieve both **stopping** and **resuming** by setting waypoint velocity.
-For **stopping** we gradually slow the car down by setting the velocity from current position to stop line linearly decreasing to zero.
-To make sure it does not overshoot we set extra_brake_wps so that if the car overshoot by accident it will still try to stop.
+Next the function `image_cb()` (lines 78 to108) identifies red lights in the incoming camera image and publishes the index of the waypoint closest to the red light's stop line to /traffic_waypoint. It publishes upcoming red lights at camera frequency. Each predicted state has to occur `STATE_COUNT_THRESHOLD` number of times (defined in line 16) until we start using it. Otherwise the previous stable state is used.
 
-For **resuming** we gradually bring the car back to the pre-configured target velocity set by the launch file. We will set the waypoint velocity value to it linearly increasing it from 0 to target velocity.
+To achieve this the helper function `process_traffic_lights()` is used (starting with line 144), which finds closest visible traffic light, if one exists, and determines its location and color. It returns the integer index of the waypoint closest to the upcoming stop line at a traffic light (-1 if none exists) and the color index of the detected traffic light if any (0: RED, 1: YELLOW, 2: GREEN, 4: UNKNOWN). 
 
-Some flags like `self.stopping` and `self.resuming` are present to carry the current state of the car.
+In line 142 we also make use of the imported `TL_classifier` function inside of the `tl_classifier.py` script which you can find  [here](./ros/src/tl_detector/light_classification/tl_classifier.py). It loads with Keras the pre-trained model to classify the incoming images and returns the color index of the detected color or returns unknown if nothing is detected.
 
+This will make up for the Perception Module. Next we will visit the Planning Module.
+ 
+#### 2.1 Waypoint Loader (Planning Module)
 
+The Waypointer Loader Node is implemented in [./ros/src/waypoint_loader/waypoint_loader.py](./ros/src/waypoint_loader/waypoint_loader.py). There the node gets initizialized and publishes to the `/base_waypoints` topic messages in the `Lane` format defined in [./ros/src/styx_msgs/msg/Lane.msg](./ros/src/styx_msgs/msg/Lane.msg).
+  
+In a nutshell the `waypoint_loader` Node loads the programmed waypoints for the car to follow around the track (line 26) and the default cruising speed (via the ROS parameter `~velocity` - see line 25). In line 26 the function `new_waypoint_loader()` is called which loads and publishes the waypoints with the default cruise velocity attached to them. 
+  
+Also inside of `waypoint_loader` additional helper functions (mainly for unit conversions) are defined and used. The published `/base_waypoints` topic will be used by the `waypoint_updater` Node, which will search and filter the relevant waypoints to follow ahead of the vehicle and update target velocities to follow depending on the current driving strategy. `base_waypoints` is also used by the perception module.
 
-#### DBW (Drive-By-Wire)
+#### 2.2 Waypoint Updater (Planning Module)
 
-We update dbw_node.py
+This [node](./ros/src/waypoint_updater/waypoint_updater.py) will publish waypoints from the car's current position to some `x` distance ahead. It will also consider traffic lights and set target speeds (attached to waypoints) accordingly to be able to adapt: meaning accelerate, stop at traffic lights or cruise depending of the data coming from the Perception Module.
 
-###### dbw_node.py
-DBW node took in target twist command and publish the driving command: throttle, brake and steer.
+We initialize the node (line 34) and subscribe to `/current_pose`, `/base_waypoints`, `/traffic_waypoints` and `/current_velocity` topics (lines 37 to 40). Then in lines 48 to 50 we define the topics we want to publish: `/final_waypoints` for the Control Module, `/driving_mode_pub` and `/car_waypoint_id_pub`. Also in lines 27 to 29 we already defined and set important parameters. `LOOKAHEAD_WPS` determines the number of waypoints ahead of the vehicle to be published for the Control Module. `BUFFER` will be used to parametrize the deceleration process just before stopping at red lights. The car will decelerate smoothly and cruise at 3mph the final yards until the buffer distance before the stopping line is reached and then finally stops.
 
-This is the main class of the DBW node. It subscribe to:
-- `/vehicle/dbw_enabled` whether DBW is enabled
-- `/current_velocity` current velocity
-- `/twist_cmd` target twist command including linear and angular velocity
+From line 54 to 69 we initialize further relevant parameters. In line 74 & 75 we call `current_velocity_cb()` and query the current velocity when accessing the subscribed topic `/current_velocity.` Then in lines 77 to 81 function `pose_cb()` returns the current position of the car in the environment when querying the `/current_pose` topic and publishes the previously described topics to be published in this node. Furthermore `waypoints_cb()` loads the basic path to follow coming from the `waypoint_loader` Node only if it has not been done already (loads only once) and `traffic_cb()` returns the index of the waypoint to stop at if a red or yellow light is detected (this information comes from Perception via the `/traffic_waypoint` topic).
 
-It publishes to `/vehicle/steering_cmd` `/vehicle/throttle_cmd` `/vehicle/brake_cmd`.
+Next from lines 100 to 193 we define some helper functions which we will not describe in detail, but we proceed to explain the main logic in this node which happens in `prepare_lookahead_waypoints()`. 
 
-Not much value added in this file by us here except we instantiate a controller that took in the subscribed information and outputs steering, throttle and break. 
+First we access the accelaration and deceleration limits via ROS parameters  (lines 198 to 201). Then in lines 203 to 216 we calculate the distance from current position to the next waypoint ahead and adjust the target velocity accordingly. For this purpose we use a PID Controller (implemented [here](./ros/src/waypoint_updater/pid.py)) to slow down the car if it deviates much from the trajectory defined by the waypoints, like passing a sharp turn. After that we set the array `next_waypoints` to the 200 waypoints (or whatever the number we set the variable `LOOKAHEAD_WPS` to) of the path that are directly situated ahead of the car (lines 219 to 221).
 
-The hardwork is in the twist_controller.py that contains the controller code.
+From lines 223 to 241 we define how to behave based on upcoming traffic light detections. If no red or yellow lights are detected (in a reasonable distance in front of the car) we will proceed to speed up without violating the incoming cruising speed via ROS parameter or max speed limit. Else we will decelerate and stop at the stopping line if the braking distance is long enough to guarantee a safe manouver inside the deceleration limit range.
 
-###### twist_controller.py
-Here we instantiates four extra controllers.
-`accel_controller` is a PID controller to estimate the target acceleration.
-`lowpass_filter` is a Low Pass Filter to smooth out the acceleration calcuated by the `accel_controller`.
-`yaw_controller` is a Yaw Controller to calculate the target steering based on target and current twist command.
-`throttle_controller` is another PID controler that took in acceleration output from the `lowpass_filter` and estimate the actual throttle needed.
-We reset the `throttle_controller` when acceleration is not positive. 
-If acceleration is negative, we calculate brake based on vehicle status specified by input controller.
+The speed up behaviour is defined by the function `speed_up()` (lines 243 to 254) and the deceleration by function `slow_down()` (lines 257 to 277).
 
+Finally the function `publish_final_waypoints()` which is called from `pose_cb` helps to publish the final waypoints, the `driving_mode_pub` (braking or not braking) and the waypoint representing the car´s current position. The last two do not appear in the overview figure in section "Project Overview".
 
+Next and last stop of our overview will be the nodes inside of the Control Module, which sends the proper commands to the vehicle actuators.
 
-#### Traffic Light Detection
+#### 3.1 DBW Node (Control Module)
 
-We updated tl_detector.py and added cv_method.py
-cv_method.py did not work for Carla driving. Reason being the filtering if too dependent on the lighting condition and would change a lot due to weather.
-We have not switched back to our original NN method.
-This will be described in later section and code in carla.py
+The DBW Node is implemented in [./ros/src/twist_controller/dbw_node.py](./ros/src/twist_controller/dbw_node.py) and here is where the steering, throttle and braking signal commands get published to the car or simulator.
 
-###### tl_detector.py
-This is the main class of Traffic light detection node.
-Traffic Light detection node subscribe to:
-- `/current pose` current position of the car
-- `/base_waypoints` planned route
-- `/vehicle/traffic_lights` positions of all traffic_lights
-- `/image_color` current image in color
+For this a twist controller is imported which is implemented [here](./ros/src/twist_controller/twist_controller.py). The twist controller (including the imported [yaw controller](./ros/src/twist_controller/yaw_controller.py)) manages to set the desired linear and angular velocity with the help of a [PID controller](./ros/src/twist_controller/pid.py) and a [Low Pass Filter](./ros/src/twist_controller/lowpass.py) which outputs the necessary actuator signals. We subscribe to the desired linear and angular velocity via the `twist_cmd` topic which is published by the `Waypoint Follower` Node.
 
-Basically it detects if there is a visible red light ahead or not. 
-It will publish its finding to `/traffic_waypoint`.
+In order to mimic human driving and prevent ping-pong actioning of throttle and brake combinations we pass a variable specifying driving mode of the car ( acceleration / deceleration) and relax the precision of following suggested speed. E.g. if we are accelerating and the car  speed increased a bit more than expected the controller will just release throttle and let the car cruise so it can slow down on its own (lines 91-108). We then also mimic brake booster functionality in lines 120-128. When the desired speed is very low we will activate extra braking force. Moreover if the car almost stopped we will apply full braking to keep the car from moving.
 
-We have been mainly working on the `process_traffic_lights` function.
-Here we firstly computed the position of all the lights and stopping line before it.
-Then for each updated current position, we check if there is any upcoming traffic light within 60 waypoints distance.
-If so we call up the **traffic light classifier function** to tell us the color.
-If it is RED, we pass it through STATE_COUNT_THRESHOLD and publish it to the waypoint updater node through `/traffic_waypoint`.
+Finally, since a safety driver may take control of the car during testing we consider the DBW status in our implementation which can be found by subscribing to `/vehicle/dbw_enabled`.
 
-The **traffic light classifier function** is to take in an image and tell if there is a red traffic light in it. 
-We have been trying out both Neural Network based or classical vision based algorithms.
-We have decided to use classical vision method.
-The reason is due to the fact that we have been using the VM provided by the course and it does not have enough computation resources to run NN in tensor flow on real-time.
-We have working NN that is able to detect the light correctly, but by the time it is done, the car has already driven past the traffic light.
+#### 3.2 Waypoint Follower (Control Module)
 
-This leads to our classical vision method using openCV functions.
-It is implemented in cv_method.py
+For the `Waypoint Follower` Node we make use of a package containing code from [Autoware](https://github.com/CPFL/Autoware) which subscribes to `/final_waypoints` and publishes target vehicle linear and angular velocities in the form of twist commands to the `/twist_cmd` topic. You can find the code [here](./ros/src/waypoint_follower/src/pure_pursuit.cpp). 
 
-The idea behind our algorithm is to detect a red filled circle within an image.
-We use `cv2.HoughCircles` to achieve it, however there are more things to consider here.
-The source of this method is from this blogpost Reference: https://solarianprogrammer.com/2015/05/08/detect-red-circles-image-using-opencv/
+## Project Results
 
-It is able to detect red colored circle.
-The algorithm described in the blogpost is able to detect red circle in simulator.
-However it is not the case for ROSBAG real-life image.
+Following the approach detailed above we get pretty satisfactory results when testing in the simulator and will proceed to submit our work for the real test on Carla!
 
-There are some problems.
-1. Color is different in real life due to lighting.
-     The color threshold set for simulator is almost perfect red. While in ROSBAG it is very bright and closer to orange.
-     **Solution:** we have added separate `cv2.inRange` function to cater both the real life and simulator.
+The car successfully drives around the simulator highway and test lot tracks with proper stopping at traffic lights. Rarely some accidents happen, but we attribute those incidents solely to ocassional CPU overloads which cause the communication between the ROS controller and the simulator to work suboptimally. Here lies potentially further room for efficiency optimization of the code, which we have done partially already (see next section) or making sure that enough hardware capacity is guaranteed.
 
+Finally we want to thank Udacity for this great opportunity and learning experience and all team members. We are very happy to graduate and happily await even more awesome future career paths.
 
+### Optimization of Code Running Time Efficiency
 
-2. HoughCircles does not care if a circle is filled or not.
-     HoughCirlces are circles detection but we need the circle to be filled for red light detection. This leads to a lot of false positive as well.
-     **Solution:** After HoughCircles returns a list of circles, I applied a cv2.countNonZero to see how filled it is, if it is below certain value, it is not counted as a detected light. Notice in the image below, only the green circle is the circle that is filled and counted as a red light.
+For automotive applications it is specially important to develop very efficient software solutions since hardware capacity on board is scarce. Powerful hardware drives the car price up and increases fuel consumption (or decreases the electric vehicle´s range) because of higher weight or higher electrical demands on the supply-system.
 
-     |                 Original                 |                 Detected                 |
-     | :--------------------------------------: | :--------------------------------------: |
-     | ![img_original_10077](./imgs/img_original_10235.png) | ![img_final_10077](./imgs/img_final_10235.png) |
+Furthermore inefficient code presents the risk of overloading the hardware system and potentially "breaking", hence represents a very serious safety issue for autonomous driving. In order to address this one needs to implement redundant hardware and software system solutions, but the first measure should always be to write clean, efficient and robust code.
 
+In the scope of this project we have taken several measures to improve the efficiency of our code. Here are some examples:
 
+1. __Algorithm optimization:__ In `waypoint_updater.py`our first implementation kept re-using the previous waypoint match when computing the closest waypoint to the car. We optimized our algorithm so that it does not make unnecessary calls.
+2. __Avoid re-computing__: Our Traffic Light Detection Node was computing similar variables that were already being computed in `waypoint_updater`. Hence we made `waypoint_updater` publish the car waypoint position to the `/car_waypoint_id` topic and the traffic light detector Node read from that topic. 
+3. __Avoiding unnecessary readings__: Subscribing to ROS topics can be computationally expensive since we have incoming data streams incoming on every loop. In the Traffic Light Detection Node we found a more efficient way to avoid subscribing to the `traffic_lights` topic by pre-computing traffic light classification.
 
-3. Also in ROSBAG, the environment, due to the sunlight, has a lot of bright red spot that has exactly same color as the traffic light. This creates a lot of false positives.
-     **Solution:** STATE_CHANGE_THRESHOLD is increased to 5 so that we can allow more false positives. Also I increase minimum distance between two circles in HoughCircles function so that false positives that clustered together can be eliminated. Notice below some false positive even after the filled ratio threshold will still be unavoidable.
-
-     |                 Original                 |                 Detected                 |
-     | :--------------------------------------: | :--------------------------------------: |
-     | ![img_original_10077](./imgs/img_original_10077.png) | ![img_final_10077](./imgs/img_final_10077.png) |
-
-4. Another problem we have seen is in simulator, it the traffic light changes to red right before we pass stop line, we might not be able to stop the car on time. 
-    **Solution:** I have deliberately increase the threshold to detect yellow color as well. So the car can be made aware it is going to be RED soon and slow down in advance.
-    As a result: in our project loginfo, we will output only two scenarios when we publish upcoming red light after state_count_thresholding. They are:
-    [RED or YELLOW]
-    vs
-    [GREEN or UNKNOWN]
-    As shown in the image below.
-    ![state_grouping](./imgs/state_grouping.png)
-
-###### **carla.py**
-Due to hardware constraints on our end, we did not use NN earlier. As CV method is proven to be not working perfectly, we switched back to NN method.
-We have been re-using a pre-trained model from [tensorflow detection model zoo](https://github.com/tensorflow/models/blob/master/research/object_detection/g3doc/detection_model_zoo.md).
-We picked [ssd_mobilenet_v1_coco](http://download.tensorflow.org/models/object_detection/ssd_mobilenet_v1_coco_2017_11_17.tar.gz) since it is the fastest.
-
-This model is trained w.r.t. COCO dataset where there traffic_light is a class. So by passing an image into the network, boxes are returned to indicate object detected and type of the object.
-It is a SSD on a mobilenet structure.
-
-Inputs are 300x300 for the network.
-So we provided 6 regions of interest with size 300x300, assuming our images are 600x800.
-
-![grids_overlay](./imgs/grids_overlay_10273.png)
-
-We loop over the 6 ROI and feed it into the NN.
-If a traffic light is detected, we will stop searching for this frame to save time.
-
-| Original                           | Grid                           | Light                            |
-| ---------------------------------- | ------------------------------ | -------------------------------- |
-| ![original](./imgs/full_10153.png) | ![grid](./imgs/grid_10153.png) | ![light](./imgs/light_10153.png) |
-
-Once a traffic light has been boxed. We will convert the cropped image to HSV like the cv_method.
-
-Looking at the V value, we filter the very bright pixels and get an average height of it.
-
-We also filter out the very dark pixels and get an average height of it.
-
-If light is on top and darkness is at bottom, then it is a red light.
-
-```python
-        brightness = cv2.cvtColor(traffic_light, cv2.COLOR_BGR2HSV)[:,:,-1]
-        light_h,light_w = np.where(brightness >= (brightness.max() - 5))
-        light_h_mean = light_h.mean()
-        dark_h,dark_w = np.where(brightness <= (brightness.max() - 50))
-        dark_h_mean = dark_h.mean()
-        total_h = traffic_light.shape[0]
-        combined_h = (light_h_mean + (total_h - dark_h_mean))/2
-        light_ratio = combined_h / total_h
-        if light_ratio < 0.53: # A larger value to include most of YELLOW as RED
-            return TrafficLight.RED
-        elif light_ratio > 0.60:
-            return TrafficLight.GREEN
-        else:
-            return TrafficLight.YELLOW
-
-```
-Vice versa for green light.
-
-So this method is color-blind friendly as it assumes the traffic light setup is vertical and always RED on top.
-
-For same reason stated in cv_method, I try to treat YELLOW as RED to be cautious so we slow down at yellow light.
-
-
-
-#### Summary
-
-With the above implementation details, we have successfully run the our algorithm in both simulator and ROSBAG files.
-After state_count_thresholding there should be no unnessary stopping of the vehicle.
-
-The cv_method might not be very robust if the lighting condition changes when running on Carla.
-Due to the limitation of hardware, this is the best of what we have here.
-
-
-
-
-
-
-### Instructions
-
-Please use **one** of the two installation options, either native **or** docker installation.
-
-#### Native Installation
+---------------------------------------------------------------------------------------------
+### Native Installation
 
 * Be sure that your workstation is running Ubuntu 16.04 Xenial Xerus or Ubuntu 14.04 Trusty Tahir. [Ubuntu downloads can be found here](https://www.ubuntu.com/download/desktop).
 * If using a Virtual Machine to install Ubuntu, use the following configuration as minimum:
@@ -242,9 +121,9 @@ Please use **one** of the two installation options, either native **or** docker 
   * [ROS Indigo](http://wiki.ros.org/indigo/Installation/Ubuntu) if you have Ubuntu 14.04.
 * [Dataspeed DBW](https://bitbucket.org/DataspeedInc/dbw_mkz_ros)
   * Use this option to install the SDK on a workstation that already has ROS installed: [One Line SDK Install (binary)](https://bitbucket.org/DataspeedInc/dbw_mkz_ros/src/81e63fcc335d7b64139d7482017d6a97b405e250/ROS_SETUP.md?fileviewer=file-view-default)
-* Download the [Udacity Simulator](https://github.com/udacity/CarND-Capstone/releases).
+* Download the [Udacity Simulator](https://github.com/udacity/CarND-Capstone/releases/tag/v1.2).
 
-#### Docker Installation
+### Docker Installation
 [Install Docker](https://docs.docker.com/engine/installation/)
 
 Build the docker container
@@ -257,53 +136,40 @@ Run the docker file
 docker run -p 4567:4567 -v $PWD:/capstone -v /tmp/log:/root/.ros/ --rm -it capstone
 ```
 
-#### Port Forwarding
-To set up port forwarding, please refer to the instructions from term 2
-
-#### Usage
+### Usage
 
 1. Clone the project repository
 ```bash
-git clone https://github.com/sunny-1651/system-integration.git
+git clone https://github.com/udacity/CarND-Capstone.git
 ```
 
-2. Inference graph
-Download the frozen_inference_graph.pb file from [this link](https://drive.google.com/file/d/1Gx_3SCwrCA5JV1Ojzmz4pg3YvnupsMJR/view?usp=sharing) https://drive.google.com/file/d/1Gx_3SCwrCA5JV1Ojzmz4pg3YvnupsMJR/view?usp=sharing in the models folder
+2. Install python dependencies
 ```bash
-ros/src/tl_detector/light_classification/models
-```
-
-3. Install python dependencies
-```bash
+cd CarND-Capstone
 pip install -r requirements.txt
 ```
-4. Make and run styx
+3. Make and run styx
 ```bash
 cd ros
 catkin_make
 source devel/setup.sh
 roslaunch launch/styx.launch
 ```
-5. Run the simulator
+4. Run the simulator
 
-#### Real world testing
-1. Download [training bag](https://s3-us-west-1.amazonaws.com/udacity-selfdrivingcar/traffic_light_bag_file.zip) that was recorded on the Udacity self-driving car.
+### Real world testing
+1. Download [training bag](https://drive.google.com/file/d/0B2_h37bMVw3iYkdJTlRSUlJIamM/view?usp=sharing) that was recorded on the Udacity self-driving car (a bag demonstraing the correct predictions in autonomous mode can be found [here](https://drive.google.com/open?id=0B2_h37bMVw3iT0ZEdlF4N01QbHc))
 2. Unzip the file
 ```bash
-unzip traffic_light_bag_file.zip
+unzip traffic_light_bag_files.zip
 ```
-3. Launch your project in site mode
+3. Play the bag file
 ```bash
-cd ros
+rosbag play -l traffic_light_bag_files/loop_with_traffic_light.bag
+```
+4. Launch your project in site mode
+```bash
+cd CarND-Capstone/ros
 roslaunch launch/site.launch
 ```
-4. Play the bag file
-```bash
-rosbag play -l traffic_light_bag_file/just_traffic_light.bag
-```
-​    and
-```bash
-rosbag play -l traffic_light_bag_file/loop_with_traffic_light.bag
-```
-
 5. Confirm that traffic light detection works on real life images
